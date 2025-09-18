@@ -5,32 +5,48 @@ plugins {
 }
 
 android {
-    namespace = "com.varplayer.app"
+    namespace "com.varplayer.app"
 
-    compileSdk = 34
-    ndkVersion = flutter.ndkVersion
+    // SDK version
+    compileSdkVersion 35
+    buildToolsVersion "35.0.0"
+
+    ndkVersion flutter.ndkVersion
 
     defaultConfig {
-        applicationId = "com.varplayer.app"
+        applicationId "com.varplayer.app"
         minSdkVersion flutter.minSdkVersion
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        targetSdkVersion 35
+        versionCode 1
+        versionName "1.0.0"
+
+        // لتفادي مشاكل تعدد المكتبات
+        multiDexEnabled true
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
 
-    buildToolsVersion = "34.0.0"
+    kotlinOptions {
+        jvmTarget = "17"
+    }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.debug
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            shrinkResources false
         }
     }
 }
 
-flutter { source = "../.." }
+flutter {
+    source "../.."
+}
+
+dependencies {
+    // دعم MultiDex
+    implementation "androidx.multidex:multidex:2.0.1"
+}

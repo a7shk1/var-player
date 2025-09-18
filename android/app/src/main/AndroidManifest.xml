@@ -2,19 +2,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.varplayer.app">
 
-    <!-- صلاحيات الشبكة والطاقة -->
+    <!-- صلاحيات -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
+        android:name="${applicationName}"
         android:label="VAR Player"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true"> <!-- احذفها لاحقاً إذا كل الروابط https -->
+        android:usesCleartextTraffic="true">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
+            android:launchMode="singleTask"
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -50,7 +51,7 @@
                 <data android:mimeType="application/vnd.apple.mpegurl" />
             </intent-filter>
 
-            <!-- ✅ Deeplink المخصص -->
+            <!-- Deeplink المخصص -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
