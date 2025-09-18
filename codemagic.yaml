@@ -5,15 +5,25 @@ workflows:
     instance_type: mac_mini_m2
 
     environment:
-      flutter: stable
+      flutter: 3.35.4
       xcode: latest
 
     scripts:
-      - name: Get Flutter packages
-        script: flutter pub get
+      - name: Prepare & get packages
+        script: |
+          set -e
+          flutter clean
+          flutter pub get
+          flutter precache --ios
 
-      - name: Build iOS IPA
-        script: flutter build ipa --release --no-codesign
+      - name: Build iOS IPA (unsigned, hello target)
+        script: |
+          set -e
+          flutter build ipa --release --no-codesign -t lib/hello_ios.dart
+          echo "Artifacts in build/ios/ipa:"
+          ls -la build/ios/ipa || true
+          echo "Archive in build/ios/archive:"
+          ls -la build/ios/archive || true
 
     artifacts:
       - build/ios/ipa/*.ipa
