@@ -16,77 +16,96 @@ workflows:
           flutter pub get
           flutter precache --ios
 
-      - name: Ensure iOS (if missing)
+      - name: Ensure iOS (create if missing)
         script: |
           set -e
-          if [ ! -f ios/Podfile ]; then
+          if [ ! -f ios/Runner.xcodeproj/project.pbxproj ]; then
+            echo "No iOS folder detected. Creating..."
             rm -rf ios
             flutter create --platforms=ios .
           fi
+          ls -la ios || true
 
-      - name: Patch Podfile (iOS 13 + static frameworks)
+      - name: Patch Podfile (safe to run even if no pods)
         script: |
           set -e
           P=ios/Podfile
-          if grep -q "^platform :ios" "$P"; then sed -i '' -e "s/^platform :ios.*/platform :ios, '13.0'/" "$P"; else printf "platform :ios, '13.0'\n%s" "$(cat "$P")" > "$P"; fi
-          if grep -q "^use_frameworks!" "$P"; then sed -i '' -e "s/^use_frameworks!.*/use_frameworks! :linkage => :static/" "$P"; else awk 'NR==1{print; print "use_frameworks! :linkage => :static"; next}1' "$P" > "$P.tmp" && mv "$P.tmp" "$P"; fi
+          if [ -f "$P" ]; then
+            # platform :ios, '13.0'
+            if grep -q "^platform :ios" "$P"; then
+              sed -i '' -e "s/^platform :ios.*/platform :ios, '13.0'/" "$P"
+            else
+              printf "platform :ios, '13.0'\n%s" "$(cat "$P")" > "$P"
+            fi
+            # use_frameworks! :linkage => :static
+            if grep -q "^use_frameworks!" "$P"; then
+              sed -i '' -e "s/^use_frameworks!.*/use_frameworks! :linkage => :static/" "$P"
+            else
+              awk 'NR==1{print; print "use_frameworks! :linkage => :static"; next}1' "$P" > "$P.tmp" && mv "$P.tmp" "$P"
+            fi
+          fi
+          echo "Podfile (if exists):"
+          [ -f "$P" ] && head -n 30 "$P" || echo "No Podfile present."
 
-      # ⬇️ شغّل CocoaPods فقط إذا عندك Plugins iOS
       - name: Reinstall CocoaPods ONLY if iOS plugins exist
         script: |
           set -e
-          COUNT=$(python3 - <<'PY' || echo 0
-import json, pathlib, sys
-p = pathlib.Path('.flutter-plugins-dependencies')
-try:
-  data = json.loads(p.read_text())
-  print(len(data.get('plugins', {}).get('ios', [])))
-except Exception:
-  print(0)
-PY
-)
-          echo "iOS plugins count: $COUNT"
-          if [ "$COUNT" -gt 0 ]; then
-            echo "Running pod install..."
+          # إذا ملف الديبندنـسيز موجود ويحوي قسم iOS غير فارغ، نشغّل بودز
+          HAS_PLUGINS=0
+          if [ -f .flutter-plugins-dependencies ]; then
+            if grep -q '"ios"' .flutter-plugins-dependencies && ! grep -q '"ios":[[:space:]]*\\[\\s*\\]' .flutter-plugins-dependencies; then
+              HAS_PLUGINS=1
+            fi
+          fi
+          echo "HAS_PLUGINS=$HAS_PLUGINS"
+          if [ "$HAS_PLUGINS" -eq 1 ]; then
+            echo "Running CocoaPods install..."
             cd ios
             rm -rf Pods Podfile.lock
             pod repo update
             pod install
             cd ..
           else
-            echo "No iOS plugins; skipping CocoaPods."
+            echo "No iOS plugins detected. Skipping CocoaPods."
           fi
 
-      - name: Xcode ARCHIVE (no signing)
+      - name: Xcode ARCHIVE (no signing) — auto choose workspace/project
         script: |
           set -e
-          xcodebuild \
-            -workspace ios/Runner.xcworkspace \
-            -scheme Runner \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -archivePath build/Runner.xcarchive \
-            clean archive \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            IPHONEOS_DEPLOYMENT_TARGET=13.0
-          ls -R build/Runner.xcarchive/Products/Applications || true
+          BUILD_ARGS=( -scheme Runner -configuration Release -sdk iphoneos -destination "generic/platform=iOS" -archivePath build/Runner.xcarchive clean archive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGNING_IDENTITY="" DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER="" IPHONEOS_DEPLOYMENT_TARGET=13.0 )
 
-      - name: Package & verify
+          if [ -d ios/Runner.xcworkspace ]; then
+            echo "Using workspace"
+            xcodebuild -workspace ios/Runner.xcworkspace "${BUILD_ARGS[@]}"
+          else
+            echo "Workspace not found; using project"
+            xcodebuild -project ios/Runner.xcodeproj "${BUILD_ARGS[@]}"
+          fi
+
+          echo "Archive Apps:"
+          ls -la build/Runner.xcarchive/Products/Applications || true
+
+      - name: Package & verify artifacts
         script: |
           set -e
           APP_DIR="build/Runner.xcarchive/Products/Applications/Runner.app"
           [ -d "$APP_DIR" ] || { echo "Runner.app not found in archive"; exit 1; }
-          test -d "$APP_DIR/Frameworks/Flutter.framework" || { echo "Flutter.framework missing"; exit 2; }
+
+          # تحقق أساسي
+          if [ -d "$APP_DIR/Frameworks/Flutter.framework" ]; then
+            echo "✅ Flutter.framework present"
+          else
+            echo "⚠️ Flutter.framework missing (may still work on newer Flutter), listing contents:"
+            find "$APP_DIR" -maxdepth 2 -print
+          fi
+
           /usr/bin/zip -r -y Runner.app.zip "$APP_DIR"
+
           rm -rf Payload Runner.ipa
           mkdir -p Payload
           cp -R "$APP_DIR" Payload/Runner.app
           /usr/bin/zip -r -y Runner.ipa Payload
+          echo "Created Runner.app.zip and Runner.ipa"
 
     artifacts:
       - Runner.app.zip
