@@ -16,7 +16,6 @@ workflows:
           flutter pub get
           flutter precache --ios
 
-      # إذا ماكو منصة iOS، ينشئها Flutter تلقائياً
       - name: Ensure iOS (if missing)
         script: |
           set -e
@@ -25,7 +24,6 @@ workflows:
             flutter create --platforms=ios .
           fi
 
-      # نضمن منصة iOS 13 وربط الفريموركات بشكل ثابت (أضمن مع Flutter/Firebase لاحقًا)
       - name: Patch Podfile (iOS 13 + static frameworks)
         script: |
           set -e
@@ -33,16 +31,32 @@ workflows:
           if grep -q "^platform :ios" "$P"; then sed -i '' -e "s/^platform :ios.*/platform :ios, '13.0'/" "$P"; else printf "platform :ios, '13.0'\n%s" "$(cat "$P")" > "$P"; fi
           if grep -q "^use_frameworks!" "$P"; then sed -i '' -e "s/^use_frameworks!.*/use_frameworks! :linkage => :static/" "$P"; else awk 'NR==1{print; print "use_frameworks! :linkage => :static"; next}1' "$P" > "$P.tmp" && mv "$P.tmp" "$P"; fi
 
-      - name: Reinstall CocoaPods cleanly
+      # ⬇️ شغّل CocoaPods فقط إذا عندك Plugins iOS
+      - name: Reinstall CocoaPods ONLY if iOS plugins exist
         script: |
           set -e
-          cd ios
-          rm -rf Pods Podfile.lock
-          pod repo update
-          pod install
-          cd ..
+          COUNT=$(python3 - <<'PY' || echo 0
+import json, pathlib, sys
+p = pathlib.Path('.flutter-plugins-dependencies')
+try:
+  data = json.loads(p.read_text())
+  print(len(data.get('plugins', {}).get('ios', [])))
+except Exception:
+  print(0)
+PY
+)
+          echo "iOS plugins count: $COUNT"
+          if [ "$COUNT" -gt 0 ]; then
+            echo "Running pod install..."
+            cd ios
+            rm -rf Pods Podfile.lock
+            pod repo update
+            pod install
+            cd ..
+          else
+            echo "No iOS plugins; skipping CocoaPods."
+          fi
 
-      # ARCHIVE بدون توقيع (أضمن تغليف للـ frameworks/assets)
       - name: Xcode ARCHIVE (no signing)
         script: |
           set -e
@@ -62,24 +76,17 @@ workflows:
             IPHONEOS_DEPLOYMENT_TARGET=13.0
           ls -R build/Runner.xcarchive/Products/Applications || true
 
-      # نحزّم .app ونكوّن .ipa يدويًا + تحقق أساسي
       - name: Package & verify
         script: |
           set -e
           APP_DIR="build/Runner.xcarchive/Products/Applications/Runner.app"
-          if [ ! -d "$APP_DIR" ]; then echo "Runner.app not found in archive"; exit 1; fi
-
-          # تحقق وجود Frameworks/Flutter.framework
+          [ -d "$APP_DIR" ] || { echo "Runner.app not found in archive"; exit 1; }
           test -d "$APP_DIR/Frameworks/Flutter.framework" || { echo "Flutter.framework missing"; exit 2; }
-          echo "Frameworks OK"
-
           /usr/bin/zip -r -y Runner.app.zip "$APP_DIR"
-
           rm -rf Payload Runner.ipa
           mkdir -p Payload
           cp -R "$APP_DIR" Payload/Runner.app
           /usr/bin/zip -r -y Runner.ipa Payload
-          echo "Created Runner.app.zip and Runner.ipa"
 
     artifacts:
       - Runner.app.zip
