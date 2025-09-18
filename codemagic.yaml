@@ -1,86 +1,24 @@
 workflows:
-  ios-archive-unsigned:
-    name: iOS Archive - unsigned (.app + .ipa)
+  ios-release-player:
+    name: iOS Release Build - Player
     max_build_duration: 60
     instance_type: mac_mini_m2
 
     environment:
-      flutter: 3.35.4
+      flutter: stable
       xcode: latest
 
     scripts:
-      - name: Doctor & deps
-        script: |
-          set -e
-          flutter doctor -v
-          flutter clean
-          flutter pub get
-          flutter precache --ios
+      - name: Get Flutter packages
+        script: flutter pub get
 
-      - name: Ensure iOS (if missing)
-        script: |
-          set -e
-          if [ ! -f ios/Podfile ]; then
-            rm -rf ios
-            flutter create --platforms=ios .
-          fi
-
-      - name: Patch Podfile (iOS 13 + static frameworks)
-        script: |
-          set -e
-          P=ios/Podfile
-          if grep -q "^platform :ios" "$P"; then sed -i '' -e "s/^platform :ios.*/platform :ios, '13.0'/" "$P"; else printf "platform :ios, '13.0'\n%s" "$(cat "$P")" > "$P"; fi
-          if grep -q "^use_frameworks!" "$P"; then sed -i '' -e "s/^use_frameworks!.*/use_frameworks! :linkage => :static/" "$P"; else awk 'NR==1{print; print "use_frameworks! :linkage => :static"; next}1' "$P" > "$P.tmp" && mv "$P.tmp" "$P"; fi
-
-      - name: Reinstall CocoaPods cleanly
-        script: |
-          set -e
-          cd ios
-          rm -rf Pods Podfile.lock
-          pod repo update
-          pod install
-          cd ..
-
-      # ⬇️ الأهم: نعمل ARCHIVE بدون توقيع (يضمن تضمين الـ Frameworks)
-      - name: Xcode ARCHIVE (no signing)
-        script: |
-          set -e
-          xcodebuild \
-            -workspace ios/Runner.xcworkspace \
-            -scheme Runner \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination 'generic/platform=iOS' \
-            -archivePath build/Runner.xcarchive \
-            clean archive \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            PROVISIONING_PROFILE_SPECIFIER="" \
-            IPHONEOS_DEPLOYMENT_TARGET=13.0
-          echo "Archive content:"
-          ls -R build/Runner.xcarchive/Products/Applications || true
-
-      - name: Collect .app and make .ipa
-        script: |
-          set -e
-          APP_DIR="build/Runner.xcarchive/Products/Applications/Runner.app"
-          if [ ! -d "$APP_DIR" ]; then echo "Runner.app not found in archive"; exit 1; fi
-
-          # .app كـ zip
-          /usr/bin/zip -r -y Runner.app.zip "$APP_DIR"
-
-          # .ipa من Payload/Runner.app
-          rm -rf Payload Runner.ipa
-          mkdir -p Payload
-          cp -R "$APP_DIR" Payload/Runner.app
-          /usr/bin/zip -r -y Runner.ipa Payload
+      - name: Build iOS IPA
+        script: flutter build ipa --release --no-codesign
 
     artifacts:
-      - Runner.app.zip              # ← نزّله وفكّه تحصل Runner.app جاهزة
-      - Runner.ipa                  # ← بديل جاهز لـ Sideloadly
-      - build/Runner.xcarchive/**   # للمراجعة إذا احتجنا
+      - build/ios/ipa/*.ipa
+      - build/ios/ipa/*.app
+      - build/ios/archive/*.xcarchive
 
     publishing:
       email:
