@@ -16,30 +16,72 @@ workflows:
           flutter pub get
           flutter precache --ios
 
-      - name: Build iOS IPA (unsigned, hello target)
+      # لو ماكو iOS/Podfile، ينشئه Flutter تلقائياً
+      - name: Ensure iOS platform (auto-create if missing)
         script: |
           set -e
-          flutter build ipa --release --no-codesign -t lib/hello_ios.dart
+          if [ ! -f ios/Podfile ]; then
+            echo "No Podfile found. Creating iOS platform..."
+            rm -rf ios
+            flutter create --platforms=ios .
+          fi
 
-      # ⬇️ خطوة فحص الـ IPA
-      - name: Inspect IPA contents
+      # اضبط منصة iOS و linking للـ Firebase
+      - name: Patch Podfile (iOS 13 + static frameworks)
         script: |
           set -e
-          IPA=$(ls build/ios/ipa/*.ipa | head -n1)
-          echo "Using IPA: $IPA"
-          rm -rf ipa_unzip && mkdir ipa_unzip
-          unzip -q "$IPA" -d ipa_unzip
-          echo "=== Tree ==="
-          find ipa_unzip -maxdepth 4 -print
-          echo "=== Check essentials ==="
-          test -d ipa_unzip/Payload/Runner.app/Frameworks/Flutter.framework
-          test -d ipa_unzip/Payload/Runner.app/Frameworks/App.framework/flutter_assets
-          test -f ipa_unzip/Payload/Runner.app/Info.plist
-          echo "IPA looks complete ✅"
+          P=ios/Podfile
+          if grep -q "^platform :ios" "$P"; then sed -i '' -e "s/^platform :ios.*/platform :ios, '13.0'/" "$P"; else printf "platform :ios, '13.0'\n%s" "$(cat "$P")" > "$P"; fi
+          if grep -q "^use_frameworks!" "$P"; then sed -i '' -e "s/^use_frameworks!.*/use_frameworks! :linkage => :static/" "$P"; else awk 'NR==1{print; print "use_frameworks! :linkage => :static"; next}1' "$P" > "$P.tmp" && mv "$P.tmp" "$P"; fi
+
+      - name: Reinstall CocoaPods cleanly
+        script: |
+          set -e
+          cd ios
+          rm -rf Pods Podfile.lock
+          pod repo update
+          pod install
+          cd ..
+
+      # ⬇️ الأهم: أرشِف Xcode بدون توقيع (أضمن تغليف للـ frameworks/assets)
+      - name: Xcode ARCHIVE (no signing)
+        script: |
+          set -e
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Runner.xcarchive \
+            clean archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            IPHONEOS_DEPLOYMENT_TARGET=13.0
+          echo "Archive content:"
+          ls -R build/Runner.xcarchive/Products/Applications || true
+
+      # طلع .app.zip و .ipa بشكل يدوي من الأرشيف (دايمًا يبانان في Artifacts)
+      - name: Package artifacts (.app.zip + .ipa)
+        script: |
+          set -e
+          APP_DIR="build/Runner.xcarchive/Products/Applications/Runner.app"
+          if [ ! -d "$APP_DIR" ]; then echo "Runner.app not found in archive"; exit 1; fi
+          /usr/bin/zip -r -y Runner.app.zip "$APP_DIR"
+
+          rm -rf Payload Runner_from_archive.ipa
+          mkdir -p Payload
+          cp -R "$APP_DIR" Payload/Runner.app
+          /usr/bin/zip -r -y Runner_from_archive.ipa Payload
+          echo "Created: Runner.app.zip and Runner_from_archive.ipa"
 
     artifacts:
-      - build/ios/ipa/*.ipa
-      - ipa_unzip/**
+      - Runner.app.zip
+      - Runner_from_archive.ipa
+      - build/Runner.xcarchive/**
 
     publishing:
       email:
