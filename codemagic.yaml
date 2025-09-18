@@ -1,6 +1,6 @@
 workflows:
-  ios-release-player:
-    name: iOS Release Build - Player
+  ios-archive-unsigned:
+    name: iOS Archive - unsigned (.app + .ipa)
     max_build_duration: 60
     instance_type: mac_mini_m2
 
@@ -9,24 +9,23 @@ workflows:
       xcode: latest
 
     scripts:
-      - name: Prepare & get packages
+      - name: Prepare
         script: |
           set -e
           flutter clean
           flutter pub get
           flutter precache --ios
 
-      # لو ماكو iOS/Podfile، ينشئه Flutter تلقائياً
-      - name: Ensure iOS platform (auto-create if missing)
+      # إذا ماكو منصة iOS، ينشئها Flutter تلقائياً
+      - name: Ensure iOS (if missing)
         script: |
           set -e
           if [ ! -f ios/Podfile ]; then
-            echo "No Podfile found. Creating iOS platform..."
             rm -rf ios
             flutter create --platforms=ios .
           fi
 
-      # اضبط منصة iOS و linking للـ Firebase
+      # نضمن منصة iOS 13 وربط الفريموركات بشكل ثابت (أضمن مع Flutter/Firebase لاحقًا)
       - name: Patch Podfile (iOS 13 + static frameworks)
         script: |
           set -e
@@ -43,7 +42,7 @@ workflows:
           pod install
           cd ..
 
-      # ⬇️ الأهم: أرشِف Xcode بدون توقيع (أضمن تغليف للـ frameworks/assets)
+      # ARCHIVE بدون توقيع (أضمن تغليف للـ frameworks/assets)
       - name: Xcode ARCHIVE (no signing)
         script: |
           set -e
@@ -61,26 +60,30 @@ workflows:
             DEVELOPMENT_TEAM="" \
             PROVISIONING_PROFILE_SPECIFIER="" \
             IPHONEOS_DEPLOYMENT_TARGET=13.0
-          echo "Archive content:"
           ls -R build/Runner.xcarchive/Products/Applications || true
 
-      # طلع .app.zip و .ipa بشكل يدوي من الأرشيف (دايمًا يبانان في Artifacts)
-      - name: Package artifacts (.app.zip + .ipa)
+      # نحزّم .app ونكوّن .ipa يدويًا + تحقق أساسي
+      - name: Package & verify
         script: |
           set -e
           APP_DIR="build/Runner.xcarchive/Products/Applications/Runner.app"
           if [ ! -d "$APP_DIR" ]; then echo "Runner.app not found in archive"; exit 1; fi
+
+          # تحقق وجود Frameworks/Flutter.framework
+          test -d "$APP_DIR/Frameworks/Flutter.framework" || { echo "Flutter.framework missing"; exit 2; }
+          echo "Frameworks OK"
+
           /usr/bin/zip -r -y Runner.app.zip "$APP_DIR"
 
-          rm -rf Payload Runner_from_archive.ipa
+          rm -rf Payload Runner.ipa
           mkdir -p Payload
           cp -R "$APP_DIR" Payload/Runner.app
-          /usr/bin/zip -r -y Runner_from_archive.ipa Payload
-          echo "Created: Runner.app.zip and Runner_from_archive.ipa"
+          /usr/bin/zip -r -y Runner.ipa Payload
+          echo "Created Runner.app.zip and Runner.ipa"
 
     artifacts:
       - Runner.app.zip
-      - Runner_from_archive.ipa
+      - Runner.ipa
       - build/Runner.xcarchive/**
 
     publishing:
