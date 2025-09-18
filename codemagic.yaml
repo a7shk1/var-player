@@ -20,15 +20,26 @@ workflows:
         script: |
           set -e
           flutter build ipa --release --no-codesign -t lib/hello_ios.dart
-          echo "Artifacts in build/ios/ipa:"
-          ls -la build/ios/ipa || true
-          echo "Archive in build/ios/archive:"
-          ls -la build/ios/archive || true
+
+      # ⬇️ خطوة فحص الـ IPA
+      - name: Inspect IPA contents
+        script: |
+          set -e
+          IPA=$(ls build/ios/ipa/*.ipa | head -n1)
+          echo "Using IPA: $IPA"
+          rm -rf ipa_unzip && mkdir ipa_unzip
+          unzip -q "$IPA" -d ipa_unzip
+          echo "=== Tree ==="
+          find ipa_unzip -maxdepth 4 -print
+          echo "=== Check essentials ==="
+          test -d ipa_unzip/Payload/Runner.app/Frameworks/Flutter.framework
+          test -d ipa_unzip/Payload/Runner.app/Frameworks/App.framework/flutter_assets
+          test -f ipa_unzip/Payload/Runner.app/Info.plist
+          echo "IPA looks complete ✅"
 
     artifacts:
       - build/ios/ipa/*.ipa
-      - build/ios/ipa/*.app
-      - build/ios/archive/*.xcarchive
+      - ipa_unzip/**
 
     publishing:
       email:
